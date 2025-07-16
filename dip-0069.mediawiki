@@ -92,7 +92,7 @@ OP_CHECKZKP
 * The value of <code>vk_len</code> must not exceed 8,192 bytes.  
 * The total number of public inputs must not exceed 64.
 
-Any transaction violating these limits will cause script failure. Mode 1 uses a fixed protocol configuration embedded from [https://github.com/openvm-io/openvm OpenVM]. This protocol defines the specific PLONK variant, KZG setup parameters, and BN256 curve configuration used for verification.
+Any transaction violating these limits will cause script failure. Mode 1 uses a fixed protocol configuration embedded from [https://github.com/openvm-org/openvm OpenVM]. This protocol defines the specific PLONK variant, KZG setup parameters, and BN256 curve configuration used for verification.
 
 == Reference Implementation ==
 
