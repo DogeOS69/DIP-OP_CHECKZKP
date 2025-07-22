@@ -89,7 +89,7 @@ OP_CHECKZKP
 </pre>
 
 * The value of <code>proof_len</code> must not exceed 4,096 bytes.
-* The value of <code>vk_len</code> must not exceed 8,192 bytes.  
+* The value of <code>vk_len</code> must not exceed 8,192 bytes.
 * The total number of public inputs must not exceed 64.
 
 Any transaction violating these limits will cause script failure. Mode 1 uses a fixed protocol configuration embedded from [https://github.com/openvm-org/openvm OpenVM]. This protocol defines the specific PLONK variant, KZG setup parameters, and BN256 curve configuration used for verification.
@@ -97,59 +97,185 @@ Any transaction violating these limits will cause script failure. Mode 1 uses a 
 == Reference Implementation ==
 
 <source lang="cpp">
-enum ZKPMode : uint32_t { GROTH16 = 0 };
+enum ZKPMode : uint32_t {
+    GROTH16 = 0,
+    PLONK_HALO2_KZG_BN256 = 1
+};
 
 case OP_CHECKZKP:
 {
-    // Ensure at least mode present
-    if (stack.size() < 1) {
+    // Only allow OP_CHECKZKP once per script
+    if (zkpOpIsUsed)
+    {
+        return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+    }
+    else
+    {
+        zkpOpIsUsed = true;
+    }
+
+    // Ensure at least mode is present
+    if (stack.size() < 1)
         return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
-    }
-    // Peek mode (do not pop, to leave stack unchanged on success)
-    valtype vchMode = stacktop(-1);
-    uint32_t mode = 0;
-    if (!CastTo32BitUnsigned(vchMode, mode)) {
-        return set_error(serror, SCRIPT_ERR_UNKNOWN_ZKP_MODE);
-    }
-    if (mode == ZKPMode::GROTH16) {
-        // Required stack items:
-        size_t proofItems = 8;        // π_A, π_B (split), π_C
-        size_t publicInputs = 2;    // number of public inputs provided
-        size_t vkChunks = 6;
-        size_t totalNeeded = proofItems + publicInputs + vkChunks + 1; // +1 for mode itself
-        if (stack.size() < totalNeeded) {
+
+    // Retrieve the mode from the top of the stack
+    CScriptNum mode(stacktop(-1), fRequireMinimal);
+
+    // Following DIP-0069: Mode 0 is Groth16 on BLS12-381
+    if(mode.getint() == ZKPMode::GROTH16) {
+        // Required stack items per DIP-0069 layout:
+        // 8 proof items + 2 public inputs + 6 VK chunks + 1 mode
+        const size_t proofItems = 8;
+        const size_t publicInputs = 2;
+        const size_t vkChunks = 6;
+        const size_t totalNeeded = proofItems + publicInputs + vkChunks + 1; // +1 for mode
+
+        if (stack.size() < totalNeeded)
             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+        // Get proof components according to DIP-0069 stack layout
+        valtype& piA_x = stacktop(-1 - proofItems - publicInputs - vkChunks);
+        valtype& piA_y = stacktop(-1 - proofItems - publicInputs - vkChunks + 1);
+        valtype& piB_x0 = stacktop(-1 - proofItems - publicInputs - vkChunks + 2);
+        valtype& piB_x1 = stacktop(-1 - proofItems - publicInputs - vkChunks + 3);
+        valtype& piB_y0 = stacktop(-1 - proofItems - publicInputs - vkChunks + 4);
+        valtype& piB_y1 = stacktop(-1 - proofItems - publicInputs - vkChunks + 5);
+        valtype& piC_x = stacktop(-1 - proofItems - publicInputs - vkChunks + 6);
+        valtype& piC_y = stacktop(-1 - proofItems - publicInputs - vkChunks + 7);
+
+        // Get public inputs
+        valtype& public_input_0 = stacktop(-1 - publicInputs - vkChunks);
+        valtype& public_input_1 = stacktop(-1 - publicInputs - vkChunks + 1);
+
+        // Get verifier key components
+        valtype& verfierDataA = stacktop(-1 - vkChunks);
+        valtype& verfierDataB = stacktop(-1 - vkChunks + 1);
+        valtype& verfierDataC = stacktop(-1 - vkChunks + 2);
+        valtype& verfierDataD = stacktop(-1 - vkChunks + 3);
+        valtype& verfierDataE = stacktop(-1 - vkChunks + 4);
+        valtype& verfierDataF = stacktop(-1 - vkChunks + 5);
+
+        // Use the existing QED implementation for actual verification
+        bls12_381_groth16::Groth16ProofWith2PublicInputs proof;
+        static bls12_381_groth16::Groth16VerifierKeyInput vk;
+        static bls12_381_groth16::Groth16VerifierKeyPrecomputedValues precomputed;
+        static valtype verfierDataACopy;
+
+        // Reconstruct proof from components
+        // Note: QED implementation expects different parameters, need to adapt
+        valtype piA;
+        piA.insert(piA.end(), piA_x.begin(), piA_x.end());
+        piA.insert(piA.end(), piA_y.begin(), piA_y.end());
+
+        valtype piB0 = piB_x0;
+        valtype piB1 = piB_x1;
+
+        valtype piC;
+        piC.insert(piC.end(), piC_x.begin(), piC_x.end());
+        piC.insert(piC.end(), piC_y.begin(), piC_y.end());
+
+        // Deserialize the proof
+        if(!bls12_381_groth16::deserializeProofWith2PublicInputs(
+            &proof, &piA, &piB0, &piB1, &piC, &public_input_0, &public_input_1)) {
+            return set_error(serror, SCRIPT_ERR_ZKP_DESERIALIZE_FAILED);
         }
-        // Gather proof data
-        CGroth16Proof proof;
-        proof.A.x = stacktop(-1 - (1) - (0 + vkChunks + publicInputs));
-        proof.A.y = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 1);
-        proof.B.x0 = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 2);
-        proof.B.x1 = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 3);
-        proof.B.y0 = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 4);
-        proof.B.y1 = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 5);
-        proof.C.x = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 6);
-        proof.C.y = stacktop(-1 - (1) - (0 + vkChunks + publicInputs) + 7);
-        // Gather public inputs
-        std::vector<uint8_t> pub0 = stacktop(-1 - (1) - (vkChunks));      // first public input (32 bytes)
-        std::vector<uint8_t> pub1 = stacktop(-1 - (1) - (vkChunks) - 1);  // second public input (32 bytes)
-        // Gather verifier key
-        Groth16VerifyingKey vk;
-        vk.data[0] = stacktop(-1 - 1 - (vkChunks-1));
-        vk.data[1] = stacktop(-1 - 1 - (vkChunks-2));
-        vk.data[2] = stacktop(-1 - 1 - (vkChunks-3));
-        vk.data[3] = stacktop(-1 - 1 - (vkChunks-4));
-        vk.data[4] = stacktop(-1 - 1 - (vkChunks-5));
-        vk.data[5] = stacktop(-1 - 1 - (vkChunks-6));
-        // Perform verification (calls into ZKP library)
-        if (!Groth16_Verify(proof, vk, {pub0, pub1})) {
+
+        // Verifier key handling with caching for efficiency
+        if (verfierDataA.size() != verfierDataACopy.size() ||
+            !std::equal(verfierDataA.begin(), verfierDataACopy.begin(), verfierDataACopy.end())) {
+
+            verfierDataACopy = verfierDataA;
+            if(!bls12_381_groth16::deserializeVerifierKeyInput(
+                &vk, &verfierDataA, &verfierDataB, &verfierDataC,
+                &verfierDataD, &verfierDataE, &verfierDataF)) {
+                return set_error(serror, SCRIPT_ERR_ZKP_DESERIALIZE_FAILED);
+            }
+
+            // Precompute the verifier key
+            if(!bls12_381_groth16::precomputeVerifierKey(&precomputed, &vk)) {
+                return set_error(serror, SCRIPT_ERR_ZKP_DESERIALIZE_FAILED);
+            }
+        }
+
+        // Verify the proof
+        int fSuccess = bls12_381_groth16::verifyProofWith2PublicInputs(&proof, &vk, &precomputed);
+
+        // Check the result of the verification
+        if(!fSuccess) {
             return set_error(serror, SCRIPT_ERR_ZKP_VERIFY_FAILED);
         }
-        // If we reach here, proof is valid. Do NOT pop anything (leave stack intact).
-        return true;
-    } else {
-        // Unknown mode
-        return set_error(serror, SCRIPT_ERR_UNKNOWN_ZKP_MODE);
+
+        // Success case: leave stack unchanged as per DIP-0069
+    }
+    else if (mode.getint() == 1) { // PLONK/Halo2 + KZG on BN256
+        // 1. Defining and checking consensus limits
+        const size_t MAX_ZKP_PROOF_SIZE = 4096;     // 4 KB
+        const size_t MAX_ZKP_VK_SIZE = 8192;        // 8 KB
+        const size_t MAX_ZKP_PUBLIC_INPUTS_COUNT = 64;
+
+        // 2. Make sure the stack has enough elements (at least mode, proof, vk, number of common inputs)
+        if (stack.size() < 4) {
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        }
+
+        // 3. Get the number of common inputs from the stack
+        CScriptNum nPublicInputs(stacktop(-3), fRequireMinimal);
+        if (nPublicInputs.getint() < 0) {
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        }
+        int32_t publicInputCount = nPublicInputs.getint();
+        if (publicInputCount > static_cast<int32_t>(MAX_ZKP_PUBLIC_INPUTS_COUNT)) {
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        }
+
+        // 4. Make sure the stack has enough elements, including all common inputs
+        if (stack.size() < static_cast<unsigned int>(3 + 1 + publicInputCount)) {
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        }
+
+        // 5. Obtaining Attestation and Verification Keys
+        valtype& proof_bytes = stacktop(-2);
+        valtype& vk_bytes = stacktop(-4);
+
+        // 6. Check size constraints
+        if (proof_bytes.size() > MAX_ZKP_PROOF_SIZE || vk_bytes.size() > MAX_ZKP_VK_SIZE) {
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        }
+
+        // 7. Collecting public input
+        std::vector<const uint8_t*> publicInputsPointers;
+        std::vector<size_t> publicInputsLengths;
+        publicInputsPointers.reserve(publicInputCount);
+        publicInputsLengths.reserve(publicInputCount);
+
+        for (int i = 0; i < publicInputCount; i++) {
+            const valtype& input = stacktop(-5 - i);
+
+            // 每个公共输入必须是 32 字节（一个标量）
+            if (input.size() != 32) {
+                return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+            }
+
+            publicInputsPointers.push_back(input.data());
+            publicInputsLengths.push_back(input.size());
+        }
+
+        // 8. Call simplified C interface verification function
+        bool result = verify_plonk_halo2_kzg_bn256_simple(
+            proof_bytes.data(), proof_bytes.size(),
+            vk_bytes.data(), vk_bytes.size(),
+            publicInputsPointers.data(), publicInputsLengths.data(),
+            static_cast<size_t>(publicInputCount)
+        );
+
+        if (!result) {
+            return set_error(serror, SCRIPT_ERR_ZKP_VERIFY_FAILED);
+        }
+
+        // Verification succeeded, no changes to the stack
+    }
+    else {
+        return set_error(serror, SCRIPT_ERR_ZKP_UNKNOWN_MODE);
     }
 }
 </source>
@@ -228,7 +354,7 @@ To assess zero-knowledge proof verification in Dogecoin Script, we design target
 * '''Objective''': Measure the time and memory required to verify a single Groth16 proof on BLS12-381.
 * '''Setup''': Execute a script containing one <code>OP_CHECKZKP</code> (Mode 0 stack layout).
 * '''Metrics''': Execution time (ms), peak memory (MB).
-* '''Test Platforms''':  
+* '''Test Platforms''':
 ** Intel i7: [TBD] ms, [TBD] MB
 ** M1 Mac: [TBD] ms, [TBD] MB
 ** Raspberry Pi 5: [TBD] ms, [TBD] MB
@@ -248,35 +374,35 @@ To assess zero-knowledge proof verification in Dogecoin Script, we design target
 ! RAM (MB)
 |-
 | 5
-| 
-| 
-| 
-| 
+|
+|
+|
+|
 |-
 | 10
-| 
-| 
-| 
-| 
+|
+|
+|
+|
 |-
 | 50
-| 
-| 
-| 
-| 
+|
+|
+|
+|
 |-
 | 100
-| 
-| 
-| 
-| 
+|
+|
+|
+|
 |}
 
 ===== 2.3 Verifying Key Reuse Benchmark =====
 * '''Objective''': Quantify the cost difference between reusing a verifier key vs. parsing a new key for each proof.
 * '''Setup''': Verify the same proof repeatedly using the same verifying key versus using unique keys each time.
 * '''Metrics''': Total validation time, verifier key parse time (ms), memory usage.
-* '''Scenarios''':  
+* '''Scenarios''':
 ** With key reuse:  [TBD]
 ** Without reuse:  [TBD]
 
@@ -284,7 +410,7 @@ To assess zero-knowledge proof verification in Dogecoin Script, we design target
 * '''Objective''': Assess latency and fork/orphan risk when blocks contain a high density of ZKP verifications.
 * '''Setup''': On the Dogecoin testnet, broadcast blocks packed with <code>OP_CHECKZKP</code> transactions.
 * '''Metrics''': Gossip propagation delay (ms), orphan block rate, miner selection latency.
-* '''Observations''':  
+* '''Observations''':
 ** Average propagation:  [TBD]
 ** Orphan frequency (out of 5 trials):  [TBD]
 
@@ -292,7 +418,7 @@ To assess zero-knowledge proof verification in Dogecoin Script, we design target
 * '''Objective''': Test the enforcement of proposed soft policy limits (e.g., 1 <code>OP_CHECKZKP</code> per transaction, 5 per block).
 * '''Setup''': Generate transactions and blocks that intentionally violate the ZKP-count policy limits.
 * '''Metrics''': Rejection rate of non-compliant transactions, correctness of mempool acceptance (no false accepts).
-* '''Outcomes''':  
+* '''Outcomes''':
 ** Violations correctly rejected:  [TBD]
 ** False negatives (violations accepted):  [TBD]
 
