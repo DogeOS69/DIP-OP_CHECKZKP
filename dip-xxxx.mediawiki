@@ -1,5 +1,5 @@
 <pre>
-DIP: 69
+DIP: XXXX
 Layer: Consensus (soft fork)
 Title: OP_CHECKZKP - Native Zero-Knowledge Proof Verification
 Author: Hanzhi Liu <hanzhi@riema.xyz>
@@ -7,6 +7,7 @@ Author: Hanzhi Liu <hanzhi@riema.xyz>
         Chaofan Shou <shou@fuzz.land>
         Yu Feng <yu@riema.xyz>
         Alex Lewis <alex@dogeos.com>
+        Jordan Jefferson <jordan@dogeos.com>
 Status: Draft
 Type: Standards Track
 Created: 2025-04-08
@@ -122,9 +123,9 @@ case OP_CHECKZKP:
     // Retrieve the mode from the top of the stack
     CScriptNum mode(stacktop(-1), fRequireMinimal);
 
-    // Following DIP-XXX: Mode 0 is Groth16 on BLS12-381
+    // Following DIP-XXXX: Mode 0 is Groth16 on BLS12-381
     if(mode.getint() == ZKPMode::GROTH16) {
-        // Required stack items per DIP-XXX layout:
+        // Required stack items per DIP-XXXX layout:
         // 8 proof items + 2 public inputs + 6 VK chunks + 1 mode
         const size_t proofItems = 8;
         const size_t publicInputs = 2;
@@ -134,7 +135,7 @@ case OP_CHECKZKP:
         if (stack.size() < totalNeeded)
             return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
 
-        // Get proof components according to DIP-XXX stack layout
+        // Get proof components according to DIP-XXXX stack layout
         valtype& piA_x = stacktop(-1 - proofItems - publicInputs - vkChunks);
         valtype& piA_y = stacktop(-1 - proofItems - publicInputs - vkChunks + 1);
         valtype& piB_x0 = stacktop(-1 - proofItems - publicInputs - vkChunks + 2);
@@ -206,7 +207,7 @@ case OP_CHECKZKP:
             return set_error(serror, SCRIPT_ERR_ZKP_VERIFY_FAILED);
         }
 
-        // Success case: leave stack unchanged as per DIP-XXX
+        // Success case: leave stack unchanged as per DIP-XXXX
     }
     else if (mode.getint() == 1) { // PLONK/Halo2 + KZG on BN256
         // 1. Defining and checking consensus limits
