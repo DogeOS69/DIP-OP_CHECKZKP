@@ -1,8 +1,8 @@
-# DIP-XXX: OP_CHECKZKP
+# DIP-XXXX: OP_CHECKZKP
 
 ## Introduction
 
-Welcome to the repository for DIP-XXX, which proposes the introduction of `OP_CHECKZKP` to Dogecoin's scripting language. This proposal aims to enhance Dogecoin's capabilities by enabling native on-chain verification of zero-knowledge proofs (ZKPs).
+Welcome to the repository for DIP-XXXX, which proposes the introduction of `OP_CHECKZKP` to Dogecoin's scripting language. This proposal aims to enhance Dogecoin's capabilities by enabling native on-chain verification of zero-knowledge proofs (ZKPs).
 
 ## Repository Structure
 
